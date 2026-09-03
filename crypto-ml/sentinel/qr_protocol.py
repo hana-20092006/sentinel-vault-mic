@@ -1,3 +1,7 @@
+from .signing import (
+    sign_payload,
+    verify_signature,
+)
 import base64
 import hashlib
 import json
@@ -295,6 +299,127 @@ def validate_qr_payload(
     if not verify_payload_hash(payload):
         raise QRPayloadInvalid(
             "Payload integrity check failed"
+        )
+
+    validate_expiry(payload)
+
+    return payload
+def create_signed_qr_payload(
+    transaction: Transaction,
+    private_key,
+) -> Dict[str, Any]:
+    """
+    Create the complete SentinelVault payload and
+    cryptographically sign it.
+    """
+
+    payload = create_qr_payload(transaction)
+
+    signature = sign_payload(
+        payload,
+        private_key,
+    )
+
+    signed_package = {
+        "protocol_version": PROTOCOL_VERSION,
+        "payload": payload,
+        "signature": signature,
+    }
+
+    return signed_package
+
+
+def encode_signed_qr_payload(
+    transaction: Transaction,
+    private_key,
+) -> str:
+    """
+    Create and encode the complete signed QR package.
+    """
+
+    signed_package = create_signed_qr_payload(
+        transaction,
+        private_key,
+    )
+
+    return _encode_payload(signed_package)
+
+
+def decode_signed_qr_payload(
+    encoded_payload: str,
+) -> Dict[str, Any]:
+    """
+    Decode a signed QR package.
+    """
+
+    package = _decode_payload(encoded_payload)
+
+    required_fields = {
+        "protocol_version",
+        "payload",
+        "signature",
+    }
+
+    missing = required_fields - package.keys()
+
+    if missing:
+        raise QRPayloadInvalid(
+            f"Missing signed QR fields: {sorted(missing)}"
+        )
+
+    if package["protocol_version"] != PROTOCOL_VERSION:
+        raise QRPayloadInvalid(
+            f"Unsupported protocol version: "
+            f"{package['protocol_version']}"
+        )
+
+    if not isinstance(package["payload"], dict):
+        raise QRPayloadInvalid(
+            "Signed QR payload must contain a JSON object"
+        )
+
+    if not isinstance(package["signature"], str):
+        raise QRPayloadInvalid(
+            "QR signature must be a string"
+        )
+
+    return package
+
+
+def validate_signed_qr_payload(
+    encoded_payload: str,
+    public_key,
+) -> Dict[str, Any]:
+    """
+    Complete validation of a signed QR package.
+
+    Checks:
+    1. QR decoding
+    2. Protocol version
+    3. Payload integrity hash
+    4. Digital signature
+    5. Expiry
+    """
+
+    package = decode_signed_qr_payload(
+        encoded_payload
+    )
+
+    payload = package["payload"]
+    signature = package["signature"]
+
+    if not verify_payload_hash(payload):
+        raise QRPayloadInvalid(
+            "Payload integrity check failed"
+        )
+
+    if not verify_signature(
+        payload,
+        signature,
+        public_key,
+    ):
+        raise QRPayloadInvalid(
+            "Digital signature verification failed"
         )
 
     validate_expiry(payload)
