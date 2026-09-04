@@ -192,3 +192,129 @@ export async function getMultiChainBalance(addresses: Record<string, string>): P
   await Promise.all(promises);
   return results;
 }
+// ─── SentinelVault ──────────────────────────────────────────────────────────
+
+const SENTINEL_API = "http://127.0.0.1:8000";
+
+export interface SentinelTransactionRequest {
+  sender: string;
+  destination: string;
+  amount: number;
+  currency: string;
+  transaction_type: string;
+  device_id: string;
+  context?: {
+    new_device?: boolean;
+    new_beneficiary?: boolean;
+    unusual_time?: boolean;
+    amount_deviation?: number;
+    recent_transaction_count?: number;
+    additional_features?: Record<string, any>;
+  };
+  expires_in_seconds?: number;
+}
+
+export interface SentinelTransactionResponse {
+  transaction_id: string;
+  status: string;
+  backend_risk: {
+    score: number;
+    level: string;
+    reasons: {
+      code: string;
+      message: string;
+    }[];
+  };
+  qr_payload: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export async function createSentinelTransaction(
+  data: SentinelTransactionRequest
+): Promise<SentinelTransactionResponse> {
+  const response = await fetch(`${SENTINEL_API}/sentinel/transactions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || "Failed to create SentinelVault transaction");
+  }
+
+  return response.json();
+}
+
+export async function submitDeviceResult(
+  transactionId: string,
+  data: {
+    device_id: string;
+    result: string;
+    timestamp?: string;
+    details?: Record<string, any>;
+  }
+) {
+  const response = await fetch(
+    `${SENTINEL_API}/sentinel/transactions/${transactionId}/device-result`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || "Hardware verification failed");
+  }
+
+  return response.json();
+}
+
+export async function authorizeSentinelTransaction(
+  transactionId: string,
+  decision: string = "APPROVE"
+) {
+  const response = await fetch(
+    `${SENTINEL_API}/sentinel/transactions/${transactionId}/authorize`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        decision,
+        authorization_method: "HARDWARE",
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || "Authorization failed");
+  }
+
+  return response.json();
+}
+
+export async function executeSentinelTransaction(transactionId: string) {
+  const response = await fetch(
+    `${SENTINEL_API}/sentinel/transactions/${transactionId}/execute`,
+    {
+      method: "POST",
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || "Execution failed");
+  }
+
+  return response.json();
+}

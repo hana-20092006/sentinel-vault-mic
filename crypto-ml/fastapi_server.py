@@ -13,6 +13,7 @@ from datetime import datetime
 import json
 from auth_routes import router as auth_router, init_auth_db
 from db_auth import close_db_pool
+from sentinel.routes import router as sentinel_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +39,7 @@ app.add_middleware(
 
 # Include authentication router
 app.include_router(auth_router)
+app.include_router(sentinel_router)
 
 # Initialize database on startup
 @app.on_event("startup")
