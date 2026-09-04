@@ -1,17 +1,25 @@
-from .signing import (
-    sign_payload,
-    verify_signature,
-)
 import base64
 import hashlib
 import json
-from datetime import datetime, timezone
 from typing import Any, Dict
 
 from .models import Transaction
+from .signing import sign_payload, verify_signature
 
 
 PROTOCOL_VERSION = "SV-QR-1.0"
+
+
+QR_FEATURES = [
+    "Avg_min_between_sent_tnx",
+    "Avg_min_between_received_tnx",
+    "Time_Diff_between_first_and_last_Mins_",
+    "Sent_tnx",
+    "Received_Tnx",
+    "total_transactions",
+    "avg_val_received",
+    "avg_val_sent",
+]
 
 
 class QRProtocolError(Exception):
@@ -27,13 +35,6 @@ class QRPayloadInvalid(QRProtocolError):
 
 
 def _canonical_json(data: Dict[str, Any]) -> str:
-    """
-    Convert a dictionary into deterministic JSON.
-
-    The exact same data will always produce the same JSON string.
-    This is important for signing and verification.
-    """
-
     return json.dumps(
         data,
         sort_keys=True,
@@ -43,12 +44,6 @@ def _canonical_json(data: Dict[str, Any]) -> str:
 
 
 def _encode_payload(data: Dict[str, Any]) -> str:
-    """
-    Encode the canonical JSON into URL-safe Base64.
-
-    This gives us a compact string suitable for QR transport.
-    """
-
     canonical = _canonical_json(data)
 
     return base64.urlsafe_b64encode(
@@ -57,8 +52,6 @@ def _encode_payload(data: Dict[str, Any]) -> str:
 
 
 def _decode_payload(encoded_payload: str) -> Dict[str, Any]:
-    """Decode URL-safe Base64 back into a JSON dictionary."""
-
     try:
         decoded = base64.urlsafe_b64decode(
             encoded_payload.encode("ascii")
@@ -79,103 +72,71 @@ def _decode_payload(encoded_payload: str) -> Dict[str, Any]:
     return data
 
 
+def _get_features(transaction: Transaction) -> Dict[str, Any]:
+    """
+    Extract exactly the 8 USO behavioural features.
+    """
+
+    if transaction.context is None:
+        raise QRPayloadInvalid(
+            "Transaction context is required before QR generation"
+        )
+
+    features = transaction.context.additional_features or {}
+
+    missing = [
+        feature
+        for feature in QR_FEATURES
+        if feature not in features
+    ]
+
+    if missing:
+        raise QRPayloadInvalid(
+            f"Missing required QR features: {', '.join(missing)}"
+        )
+
+    return {
+        feature: features[feature]
+        for feature in QR_FEATURES
+    }
+
+
 def build_qr_payload(
     transaction: Transaction,
 ) -> Dict[str, Any]:
     """
-    Build the complete SentinelVault QR payload.
+    Build the QR payload.
 
-    This is the payload consumed by the ESP32-CAM.
+    The payload contains ONLY the 8 USO behavioural features.
     """
 
-    if transaction.risk is None:
-        raise QRPayloadInvalid(
-            "Transaction must have a risk assessment before QR generation"
-        )
-
-    if transaction.context is None:
-        raise QRPayloadInvalid(
-            "Transaction must have contextual information before QR generation"
-        )
-
-    payload = {
-        "protocol_version": PROTOCOL_VERSION,
-
-        "transaction": {
-            "transaction_id": transaction.transaction_id,
-            "sender": transaction.sender,
-            "destination": transaction.destination,
-            "amount": transaction.amount,
-            "currency": transaction.currency,
-            "transaction_type": transaction.transaction_type.value,
-            "device_id": transaction.device_id,
-            "timestamp": transaction.timestamp.isoformat(),
-        },
-
-        "context": {
-            "new_device": transaction.context.new_device,
-            "new_beneficiary": transaction.context.new_beneficiary,
-            "unusual_time": transaction.context.unusual_time,
-            "amount_deviation": transaction.context.amount_deviation,
-            "recent_transaction_count": (
-                transaction.context.recent_transaction_count
-            ),
-            "additional_features": (
-                transaction.context.additional_features
-            ),
-        },
-
-        "backend_risk": {
-            "score": transaction.risk.score,
-            "level": transaction.risk.level.value,
-            "reasons": [
-                {
-                    "code": reason.code,
-                    "message": reason.message,
-                }
-                for reason in transaction.risk.reasons
-            ],
-        },
-
-        "created_at": transaction.created_at.isoformat(),
-        "expires_at": transaction.expires_at.isoformat(),
-    }
-
-    return payload
+    return _get_features(transaction)
 
 
 def create_qr_payload(
     transaction: Transaction,
 ) -> Dict[str, Any]:
     """
-    Build the payload and add a deterministic payload hash.
-
-    The hash allows the receiver to verify that the decoded
-    transaction data has not been accidentally modified.
+    Build the 8-feature payload and add its integrity hash.
     """
 
     payload = build_qr_payload(transaction)
 
-    payload_without_hash = dict(payload)
-
-    canonical = _canonical_json(payload_without_hash)
-
     payload_hash = hashlib.sha256(
-        canonical.encode("utf-8")
+        _canonical_json(payload).encode("utf-8")
     ).hexdigest()
 
-    payload["payload_hash"] = payload_hash
-
-    return payload
+    return {
+        **payload,
+        "payload_hash": payload_hash,
+    }
 
 
 def encode_qr_payload(
     transaction: Transaction,
 ) -> str:
     """
-    Build and encode the complete transaction payload.
-
-    The returned string is what the QR generator should encode.
+    Encode the 8-feature QR payload.
     """
 
     payload = create_qr_payload(transaction)
@@ -187,20 +148,12 @@ def decode_qr_payload(
     encoded_payload: str,
 ) -> Dict[str, Any]:
     """
-    Decode a QR payload and validate its structure.
+    Decode and validate the 8-feature QR payload.
     """
 
     payload = _decode_payload(encoded_payload)
 
-    required_fields = {
-        "protocol_version",
-        "transaction",
-        "context",
-        "backend_risk",
-        "created_at",
-        "expires_at",
-        "payload_hash",
-    }
+    required_fields = set(QR_FEATURES) | {"payload_hash"}
 
     missing = required_fields - payload.keys()
 
@@ -209,10 +162,11 @@ def decode_qr_payload(
             f"Missing required fields: {sorted(missing)}"
         )
 
-    if payload["protocol_version"] != PROTOCOL_VERSION:
+    unexpected = set(payload.keys()) - required_fields
+
+    if unexpected:
         raise QRPayloadInvalid(
-            f"Unsupported protocol version: "
-            f"{payload['protocol_version']}"
+            f"Unexpected QR fields: {sorted(unexpected)}"
         )
 
     return payload
@@ -222,9 +176,7 @@ def verify_payload_hash(
     payload: Dict[str, Any],
 ) -> bool:
     """
-    Verify that the payload has not been modified.
-
-    Returns True when the hash matches.
+    Verify that the 8-feature payload has not been modified.
     """
 
     received_hash = payload.get("payload_hash")
@@ -232,13 +184,13 @@ def verify_payload_hash(
     if not received_hash:
         return False
 
-    payload_without_hash = dict(payload)
-    payload_without_hash.pop("payload_hash", None)
-
-    canonical = _canonical_json(payload_without_hash)
+    feature_payload = {
+        feature: payload[feature]
+        for feature in QR_FEATURES
+    }
 
     calculated_hash = hashlib.sha256(
-        canonical.encode("utf-8")
+        _canonical_json(feature_payload).encode("utf-8")
     ).hexdigest()
 
     return calculated_hash == received_hash
@@ -246,52 +198,23 @@ def verify_payload_hash(
 
 def validate_expiry(
     payload: Dict[str, Any],
-    now: datetime | None = None,
+    now=None,
 ) -> None:
     """
-    Ensure the QR payload has not expired.
+    Kept for compatibility with the existing protocol.
+
+    Expiry is now handled by the transaction/backend layer,
+    because the QR itself contains only the 8 USO features.
     """
 
-    expires_at_string = payload.get("expires_at")
-
-    if not expires_at_string:
-        raise QRPayloadInvalid(
-            "Missing expires_at"
-        )
-
-    try:
-        expires_at = datetime.fromisoformat(
-            expires_at_string.replace("Z", "+00:00")
-        )
-
-    except ValueError as exc:
-        raise QRPayloadInvalid(
-            "Invalid expires_at timestamp"
-        ) from exc
-
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(
-            tzinfo=timezone.utc
-        )
-
-    current_time = now or datetime.now(timezone.utc)
-
-    if current_time >= expires_at:
-        raise QRPayloadExpired(
-            "QR transaction authorization has expired"
-        )
+    return None
 
 
 def validate_qr_payload(
     encoded_payload: str,
 ) -> Dict[str, Any]:
     """
-    Complete validation pipeline for the ESP32/backend receiver.
-
-    1. Decode
-    2. Validate protocol
-    3. Verify hash
-    4. Check expiry
+    Validate the unsigned 8-feature QR payload.
     """
 
     payload = decode_qr_payload(encoded_payload)
@@ -301,16 +224,19 @@ def validate_qr_payload(
             "Payload integrity check failed"
         )
 
-    validate_expiry(payload)
-
     return payload
+
+
+# =========================================================
+# SIGNED QR
+# =========================================================
+
 def create_signed_qr_payload(
     transaction: Transaction,
     private_key,
 ) -> Dict[str, Any]:
     """
-    Create the complete SentinelVault payload and
-    cryptographically sign it.
+    Create the 8-feature payload and digitally sign it.
     """
 
     payload = create_qr_payload(transaction)
@@ -320,13 +246,11 @@ def create_signed_qr_payload(
         private_key,
     )
 
-    signed_package = {
+    return {
         "protocol_version": PROTOCOL_VERSION,
         "payload": payload,
         "signature": signature,
     }
-
-    return signed_package
 
 
 def encode_signed_qr_payload(
@@ -334,7 +258,7 @@ def encode_signed_qr_payload(
     private_key,
 ) -> str:
     """
-    Create and encode the complete signed QR package.
+    Encode the signed 8-feature QR package.
     """
 
     signed_package = create_signed_qr_payload(
@@ -391,22 +315,36 @@ def validate_signed_qr_payload(
     public_key,
 ) -> Dict[str, Any]:
     """
-    Complete validation of a signed QR package.
+    Validate the signed 8-feature QR package.
 
     Checks:
-    1. QR decoding
+    1. Decode
     2. Protocol version
-    3. Payload integrity hash
-    4. Digital signature
-    5. Expiry
+    3. Exactly 8 features
+    4. Payload hash
+    5. Digital signature
     """
 
-    package = decode_signed_qr_payload(
-        encoded_payload
-    )
+    package = decode_signed_qr_payload(encoded_payload)
 
     payload = package["payload"]
     signature = package["signature"]
+
+    required_fields = set(QR_FEATURES) | {"payload_hash"}
+
+    missing = required_fields - payload.keys()
+
+    if missing:
+        raise QRPayloadInvalid(
+            f"Missing QR features: {sorted(missing)}"
+        )
+
+    unexpected = set(payload.keys()) - required_fields
+
+    if unexpected:
+        raise QRPayloadInvalid(
+            f"Unexpected QR fields: {sorted(unexpected)}"
+        )
 
     if not verify_payload_hash(payload):
         raise QRPayloadInvalid(
@@ -421,7 +359,5 @@ def validate_signed_qr_payload(
         raise QRPayloadInvalid(
             "Digital signature verification failed"
         )
-
-    validate_expiry(payload)
 
     return payload

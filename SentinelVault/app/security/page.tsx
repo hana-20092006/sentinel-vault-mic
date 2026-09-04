@@ -1,13 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import DashboardLayout from "../components/DashboardLayout";
 import {
   createSentinelTransaction,
   submitDeviceResult,
   authorizeSentinelTransaction,
   executeSentinelTransaction,
-  SentinelTransactionResponse,
 } from "@/lib/api";
 
 type MLFeatures = {
@@ -27,10 +25,7 @@ type ScenarioContext = {
   unusual_time: boolean;
   amount_deviation: number;
   recent_transaction_count: number;
-  additional_features?: {
-    ml_features?: MLFeatures;
-    [key: string]: any;
-  };
+  additional_features: MLFeatures;
 };
 
 type Scenario = {
@@ -42,30 +37,40 @@ type Scenario = {
   context: ScenarioContext;
 };
 
+const defaultMLFeatures: MLFeatures = {
+  Avg_min_between_sent_tnx: 120,
+  Avg_min_between_received_tnx: 240,
+  Time_Diff_between_first_and_last_Mins_: 43200,
+  Sent_tnx: 12,
+  Received_Tnx: 15,
+  total_transactions: 27,
+  avg_val_received: 12000,
+  avg_val_sent: 8500,
+};
+
 const scenarios: Scenario[] = [
   {
     id: "normal",
     name: "Normal Transaction",
-    description: "Known device, known beneficiary, normal behaviour.",
-    amount: 25000,
-    destination: "0xKNOWN-SUPPLIER",
+    description:
+      "A routine transaction from a trusted device to an established beneficiary.",
+    amount: 5000,
+    destination: "0xKNOWN-BENEFICIARY",
     context: {
       new_device: false,
       new_beneficiary: false,
       unusual_time: false,
-      amount_deviation: 0.05,
+      amount_deviation: 0,
       recent_transaction_count: 1,
       additional_features: {
-        ml_features: {
-          Avg_min_between_sent_tnx: 1440,
-          Avg_min_between_received_tnx: 720,
-          Time_Diff_between_first_and_last_Mins_: 43200,
-          Sent_tnx: 30,
-          Received_Tnx: 42,
-          total_transactions: 72,
-          avg_val_received: 18500,
-          avg_val_sent: 12000,
-        },
+        Avg_min_between_sent_tnx: 180,
+        Avg_min_between_received_tnx: 360,
+        Time_Diff_between_first_and_last_Mins_: 129600,
+        Sent_tnx: 8,
+        Received_Tnx: 11,
+        total_transactions: 19,
+        avg_val_received: 9000,
+        avg_val_sent: 6500,
       },
     },
   },
@@ -74,29 +79,24 @@ const scenarios: Scenario[] = [
     id: "contextual",
     name: "Contextual Attack",
     description:
-      "A legitimate transfer becomes suspicious when multiple signals appear together.",
-    amount: 500000,
-    destination: "0xNEW-SUPPLIER",
+      "The transaction appears legitimate, but the surrounding context is highly unusual.",
+    amount: 150000,
+    destination: "0xNEW-BENEFICIARY",
     context: {
       new_device: true,
       new_beneficiary: true,
       unusual_time: true,
-      amount_deviation: 0.8,
+      amount_deviation: 0.9,
       recent_transaction_count: 3,
       additional_features: {
-        recent_small_transfers: true,
-        beneficiary_age_days: 1,
-        device_age_days: 1,
-        ml_features: {
-          Avg_min_between_sent_tnx: 18,
-          Avg_min_between_received_tnx: 720,
-          Time_Diff_between_first_and_last_Mins_: 43200,
-          Sent_tnx: 38,
-          Received_Tnx: 42,
-          total_transactions: 80,
-          avg_val_received: 18500,
-          avg_val_sent: 48500,
-        },
+        Avg_min_between_sent_tnx: 18,
+        Avg_min_between_received_tnx: 720,
+        Time_Diff_between_first_and_last_Mins_: 43200,
+        Sent_tnx: 38,
+        Received_Tnx: 42,
+        total_transactions: 80,
+        avg_val_received: 18500,
+        avg_val_sent: 48500,
       },
     },
   },
@@ -115,1252 +115,885 @@ const scenarios: Scenario[] = [
       amount_deviation: 0.65,
       recent_transaction_count: 8,
       additional_features: {
-        rapid_transaction_sequence: true,
-        multiple_recent_beneficiaries: true,
-        ml_features: {
-          Avg_min_between_sent_tnx: 3,
-          Avg_min_between_received_tnx: 12,
-          Time_Diff_between_first_and_last_Mins_: 43200,
-          Sent_tnx: 75,
-          Received_Tnx: 48,
-          total_transactions: 123,
-          avg_val_received: 16000,
-          avg_val_sent: 32000,
-        },
+        Avg_min_between_sent_tnx: 3,
+        Avg_min_between_received_tnx: 12,
+        Time_Diff_between_first_and_last_Mins_: 43200,
+        Sent_tnx: 75,
+        Received_Tnx: 48,
+        total_transactions: 123,
+        avg_val_received: 16000,
+        avg_val_sent: 32000,
       },
     },
   },
 ];
 
-const defaultCustomContext: ScenarioContext = {
+const emptyCustomContext: ScenarioContext = {
   new_device: false,
   new_beneficiary: false,
   unusual_time: false,
-  amount_deviation: 0.05,
+  amount_deviation: 0,
   recent_transaction_count: 1,
-  additional_features: {
-    ml_features: {
-      Avg_min_between_sent_tnx: 1440,
-      Avg_min_between_received_tnx: 720,
-      Time_Diff_between_first_and_last_Mins_: 43200,
-      Sent_tnx: 30,
-      Received_Tnx: 42,
-      total_transactions: 72,
-      avg_val_received: 18500,
-      avg_val_sent: 12000,
-    },
-  },
+  additional_features: defaultMLFeatures,
 };
 
 export default function SecurityPage() {
-  const [selectedScenario, setSelectedScenario] = useState<Scenario>(
-    scenarios[1]
-  );
-
+  const [selectedScenario, setSelectedScenario] = useState("normal");
   const [isCustom, setIsCustom] = useState(false);
 
-  const [customAmount, setCustomAmount] = useState("25000");
+  const [customAmount, setCustomAmount] = useState(5000);
   const [customDestination, setCustomDestination] =
-    useState("0xCUSTOM-DESTINATION");
+    useState("0xCUSTOM-BENEFICIARY");
 
   const [customContext, setCustomContext] =
-    useState<ScenarioContext>(defaultCustomContext);
+    useState<ScenarioContext>(emptyCustomContext);
 
-  const [transaction, setTransaction] =
-    useState<SentinelTransactionResponse | null>(null);
-
-  const [stage, setStage] = useState("READY");
+  const [transaction, setTransaction] = useState<any>(null);
+  const [stage, setStage] = useState("idle");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const activeAmount = isCustom
-    ? Number(customAmount) || 0
-    : selectedScenario.amount;
+  const activeScenario = isCustom
+    ? {
+        id: "custom",
+        name: "Custom Transaction",
+        description:
+          "Configure your own transaction and behavioural context.",
+        amount: customAmount,
+        destination: customDestination,
+        context: customContext,
+      }
+    : scenarios.find((scenario) => scenario.id === selectedScenario)!;
 
-  const activeDestination = isCustom
-    ? customDestination || "0xCUSTOM-DESTINATION"
-    : selectedScenario.destination;
-
-  const activeContext = isCustom
-    ? customContext
-    : selectedScenario.context;
-
-  const updateCustomMLFeature = (
+  function updateCustomFeature(
     key: keyof MLFeatures,
-    value: string
-  ) => {
+    value: number
+  ) {
     setCustomContext((previous) => ({
       ...previous,
       additional_features: {
         ...previous.additional_features,
-        ml_features: {
-          ...previous.additional_features?.ml_features,
-          [key]: Number(value) || 0,
-        } as MLFeatures,
+        [key]: value,
       },
     }));
-  };
+  }
 
-  const runSimulation = async () => {
+  function updateContext(
+    key: keyof Omit<
+      ScenarioContext,
+      "additional_features"
+    >,
+    value: boolean | number
+  ) {
+    setCustomContext((previous) => ({
+      ...previous,
+      [key]: value,
+    }));
+  }
+
+  async function runSimulation() {
+    setLoading(true);
+    setError("");
+    setTransaction(null);
+    setStage("analyzing");
+
     try {
-      setLoading(true);
-      setError("");
-      setTransaction(null);
-      setStage("ANALYZING");
-
       const result = await createSentinelTransaction({
-        sender: "0xSENTINEL-DEMO",
-        destination: activeDestination,
-        amount: activeAmount,
+        sender: "0xSENTINEL-USER",
+        destination: activeScenario.destination,
+        amount: Number(activeScenario.amount),
         currency: "INR",
         transaction_type: "TRANSFER",
-        device_id: "DEVICE-001",
-        context: activeContext,
-        expires_in_seconds: 120,
+        device_id: "ESP32-SENTINEL-001",
+        context: {
+          new_device: activeScenario.context.new_device,
+          new_beneficiary: activeScenario.context.new_beneficiary,
+          unusual_time: activeScenario.context.unusual_time,
+          amount_deviation:
+            activeScenario.context.amount_deviation,
+          recent_transaction_count:
+            activeScenario.context.recent_transaction_count,
+
+          // IMPORTANT:
+          // The QR payload uses exactly these 8 features.
+          additional_features:
+            activeScenario.context.additional_features,
+        },
+        expires_in_seconds: 300,
       });
 
       setTransaction(result);
-      setStage("RISK_DECISION");
+      setStage("risk_complete");
     } catch (err: any) {
-      setError(err.message || "Simulation failed");
-      setStage("ERROR");
+      setError(err?.message || "Security analysis failed.");
+      setStage("error");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const verifyHardware = async () => {
+  async function runHardwareVerification() {
     if (!transaction) return;
 
-    try {
-      setLoading(true);
-      setError("");
+    setLoading(true);
+    setError("");
+    setStage("hardware");
 
+    try {
       await submitDeviceResult(transaction.transaction_id, {
-        device_id: "DEVICE-001",
+        device_id: "ESP32-SENTINEL-001",
         result: "VERIFIED",
         timestamp: new Date().toISOString(),
         details: {
           signature_valid: true,
           payload_hash_valid: true,
           user_confirmed: true,
-          simulation: true,
+          simulated: true,
         },
       });
 
-      setStage("HARDWARE_VERIFIED");
+      setStage("verified");
     } catch (err: any) {
-      setError(err.message || "Hardware verification failed");
-      setStage("ERROR");
+      setError(err?.message || "Hardware verification failed.");
+      setStage("error");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const authorize = async () => {
+  async function authorizeTransaction() {
     if (!transaction) return;
 
-    try {
-      setLoading(true);
-      setError("");
+    setLoading(true);
+    setError("");
+    setStage("authorizing");
 
+    try {
       await authorizeSentinelTransaction(
         transaction.transaction_id,
         "APPROVE"
       );
 
-      setStage("AUTHORIZED");
+      setStage("authorized");
     } catch (err: any) {
-      setError(err.message || "Authorization failed");
-      setStage("ERROR");
+      setError(err?.message || "Authorization failed.");
+      setStage("error");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const execute = async () => {
+  async function executeTransaction() {
     if (!transaction) return;
 
+    setLoading(true);
+    setError("");
+    setStage("executing");
+
     try {
-      setLoading(true);
-      setError("");
+      await executeSentinelTransaction(
+        transaction.transaction_id
+      );
 
-      await executeSentinelTransaction(transaction.transaction_id);
-
-      setStage("EXECUTED");
+      setStage("executed");
     } catch (err: any) {
-      setError(err.message || "Execution failed");
-      setStage("ERROR");
+      setError(err?.message || "Execution failed.");
+      setStage("error");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const resetSimulation = () => {
+  function resetSimulation() {
     setTransaction(null);
-    setStage("READY");
+    setStage("idle");
     setError("");
-  };
-
-  const riskScore = transaction
-    ? Math.round(transaction.backend_risk.score * 100)
-    : null;
-
-  const riskLevel = transaction?.backend_risk.level || null;
-
-  const mlFeatures =
-    activeContext.additional_features?.ml_features;
+  }
 
   return (
-    <DashboardLayout>
-      <div style={{ maxWidth: 1150 }}>
-        {/* HEADER */}
-        <div style={{ marginBottom: "var(--spacing-8)" }}>
-          <div
-            style={{
-              fontSize: "0.65rem",
-              fontWeight: 800,
-              letterSpacing: "0.16em",
-              color: "var(--text-muted)",
-              marginBottom: "8px",
-            }}
-          >
-            SENTINELVAULT / SECURITY INTELLIGENCE
-          </div>
+    <main className="min-h-screen bg-black px-6 py-10 text-white">
+      <div className="mx-auto max-w-7xl">
 
-          <h1
-            style={{
-              fontFamily: "var(--font-headline)",
-              fontSize: "2rem",
-              fontWeight: 800,
-              letterSpacing: "-0.04em",
-              color: "var(--text-primary)",
-              margin: 0,
-            }}
-          >
+        {/* HEADER */}
+        <div className="mb-10">
+          <p className="mb-2 text-sm font-medium uppercase tracking-[0.25em] text-cyan-400">
+            SentinelVault
+          </p>
+
+          <h1 className="text-4xl font-bold tracking-tight">
             Security Simulation Lab
           </h1>
 
-          <p
-            style={{
-              fontFamily: "var(--font-body)",
-              fontSize: "0.875rem",
-              color: "var(--text-muted)",
-              marginTop: "8px",
-              maxWidth: 680,
-              lineHeight: 1.6,
-            }}
-          >
-            See how SentinelVault evaluates transaction context before
-            allowing an irreversible financial commitment.
+          <p className="mt-3 max-w-3xl text-gray-400">
+            Evaluate transaction risk using behavioural context before
+            the transaction becomes irreversible.
           </p>
         </div>
 
         {/* SCENARIO SELECTOR */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: "12px",
-            marginBottom: "20px",
-          }}
-        >
-          {scenarios.map((scenario) => {
-            const selected =
-              !isCustom && selectedScenario.id === scenario.id;
+        <section className="mb-8">
+          <div className="grid gap-4 md:grid-cols-4">
 
-            return (
+            {scenarios.map((scenario) => (
               <button
                 key={scenario.id}
                 onClick={() => {
-                  setSelectedScenario(scenario);
+                  setSelectedScenario(scenario.id);
                   setIsCustom(false);
                   resetSimulation();
                 }}
-                style={{
-                  textAlign: "left",
-                  padding: "18px",
-                  borderRadius: "14px",
-                  border: selected
-                    ? "1px solid var(--text-primary)"
-                    : "1px solid var(--border-subtle)",
-                  background: selected
-                    ? "var(--bg-surface-container-high)"
-                    : "var(--bg-surface-container)",
-                  color: "var(--text-primary)",
-                  cursor: "pointer",
-                }}
+                className={`rounded-2xl border p-5 text-left transition ${
+                  !isCustom &&
+                  selectedScenario === scenario.id
+                    ? "border-cyan-400 bg-cyan-400/10"
+                    : "border-white/10 bg-white/[0.03] hover:border-white/30"
+                }`}
               >
-                <div
-                  style={{
-                    fontSize: "0.7rem",
-                    fontWeight: 800,
-                    letterSpacing: "0.08em",
-                    marginBottom: "8px",
-                  }}
-                >
-                  {scenario.name.toUpperCase()}
+                <div className="mb-2 text-lg font-semibold">
+                  {scenario.name}
                 </div>
 
-                <div
-                  style={{
-                    fontSize: "0.75rem",
-                    color: "var(--text-muted)",
-                    lineHeight: 1.5,
-                  }}
-                >
+                <p className="text-sm leading-6 text-gray-400">
                   {scenario.description}
-                </div>
-
-                <div
-                  style={{
-                    marginTop: "14px",
-                    fontSize: "0.9rem",
-                    fontWeight: 700,
-                  }}
-                >
-                  ₹{scenario.amount.toLocaleString("en-IN")}
-                </div>
+                </p>
               </button>
-            );
-          })}
+            ))}
 
-          {/* CUSTOM */}
-          <button
-            onClick={() => {
-              setIsCustom(true);
-              resetSimulation();
-            }}
-            style={{
-              textAlign: "left",
-              padding: "18px",
-              borderRadius: "14px",
-              border: isCustom
-                ? "1px solid var(--text-primary)"
-                : "1px solid var(--border-subtle)",
-              background: isCustom
-                ? "var(--bg-surface-container-high)"
-                : "var(--bg-surface-container)",
-              color: "var(--text-primary)",
-              cursor: "pointer",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "0.7rem",
-                fontWeight: 800,
-                letterSpacing: "0.08em",
-                marginBottom: "8px",
+            <button
+              onClick={() => {
+                setIsCustom(true);
+                resetSimulation();
               }}
+              className={`rounded-2xl border p-5 text-left transition ${
+                isCustom
+                  ? "border-purple-400 bg-purple-400/10"
+                  : "border-white/10 bg-white/[0.03] hover:border-white/30"
+              }`}
             >
-              CUSTOM TRANSACTION
-            </div>
+              <div className="mb-2 text-lg font-semibold">
+                Custom Transaction
+              </div>
 
-            <div
-              style={{
-                fontSize: "0.75rem",
-                color: "var(--text-muted)",
-                lineHeight: 1.5,
-              }}
-            >
-              Enter your own transaction and behavioural context.
-            </div>
+              <p className="text-sm leading-6 text-gray-400">
+                Configure your own transaction and risk signals.
+              </p>
+            </button>
 
-            <div
-              style={{
-                marginTop: "14px",
-                fontSize: "0.9rem",
-                fontWeight: 700,
-              }}
-            >
-              INTERACTIVE
-            </div>
-          </button>
-        </div>
+          </div>
+        </section>
 
-        {/* CUSTOM INPUT FORM */}
+        {/* CUSTOM CONFIGURATION */}
         {isCustom && (
-          <div
-            className="card"
-            style={{
-              padding: "22px",
-              marginBottom: "20px",
-              background: "var(--bg-surface-container)",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "0.65rem",
-                fontWeight: 800,
-                letterSpacing: "0.12em",
-                color: "var(--text-muted)",
-                marginBottom: "18px",
-              }}
-            >
-              CUSTOM TRANSACTION INPUT
-            </div>
+          <section className="mb-8 rounded-2xl border border-purple-400/30 bg-purple-400/5 p-6">
 
-            {/* Transaction details */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "14px",
-                marginBottom: "22px",
-              }}
-            >
+            <h2 className="mb-6 text-xl font-semibold">
+              Custom Transaction
+            </h2>
+
+            <div className="grid gap-5 md:grid-cols-2">
+
               <InputField
-                label="AMOUNT (INR)"
-                value={customAmount}
-                onChange={setCustomAmount}
+                label="Amount"
                 type="number"
+                value={customAmount}
+                onChange={(value) =>
+                  setCustomAmount(Number(value))
+                }
               />
 
               <InputField
-                label="DESTINATION"
+                label="Destination"
                 value={customDestination}
                 onChange={setCustomDestination}
               />
-            </div>
 
-            {/* Context toggles */}
-            <div
-              style={{
-                fontSize: "0.65rem",
-                fontWeight: 800,
-                letterSpacing: "0.1em",
-                color: "var(--text-muted)",
-                marginBottom: "10px",
-              }}
-            >
-              TRANSACTION CONTEXT
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gap: "10px",
-                marginBottom: "20px",
-              }}
-            >
               <ToggleField
-                label="NEW DEVICE"
+                label="New Device"
                 value={customContext.new_device}
                 onChange={(value) =>
-                  setCustomContext((previous) => ({
-                    ...previous,
-                    new_device: value,
-                  }))
+                  updateContext("new_device", value)
                 }
               />
 
               <ToggleField
-                label="NEW BENEFICIARY"
+                label="New Beneficiary"
                 value={customContext.new_beneficiary}
                 onChange={(value) =>
-                  setCustomContext((previous) => ({
-                    ...previous,
-                    new_beneficiary: value,
-                  }))
+                  updateContext("new_beneficiary", value)
                 }
               />
 
               <ToggleField
-                label="UNUSUAL TIME"
+                label="Unusual Time"
                 value={customContext.unusual_time}
                 onChange={(value) =>
-                  setCustomContext((previous) => ({
-                    ...previous,
-                    unusual_time: value,
-                  }))
+                  updateContext("unusual_time", value)
                 }
               />
-            </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "14px",
-                marginBottom: "24px",
-              }}
-            >
               <InputField
-                label="AMOUNT DEVIATION (0 - 1)"
-                value={String(customContext.amount_deviation)}
-                onChange={(value) =>
-                  setCustomContext((previous) => ({
-                    ...previous,
-                    amount_deviation: Number(value) || 0,
-                  }))
-                }
+                label="Amount Deviation"
                 type="number"
-              />
-
-              <InputField
-                label="RECENT TRANSACTIONS"
-                value={String(
-                  customContext.recent_transaction_count
-                )}
+                step="0.05"
+                value={customContext.amount_deviation}
                 onChange={(value) =>
-                  setCustomContext((previous) => ({
-                    ...previous,
-                    recent_transaction_count: Number(value) || 0,
-                  }))
+                  updateContext(
+                    "amount_deviation",
+                    Number(value)
+                  )
                 }
-                type="number"
               />
-            </div>
 
-            {/* ML features */}
-            <div
-              style={{
-                fontSize: "0.65rem",
-                fontWeight: 800,
-                letterSpacing: "0.1em",
-                color: "var(--text-muted)",
-                marginBottom: "12px",
-              }}
-            >
-              BEHAVIOURAL ML FEATURES
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, 1fr)",
-                gap: "12px",
-              }}
-            >
               <InputField
-                label="AVG TIME BETWEEN SENT TXNS (MIN)"
-                value={String(
-                  mlFeatures?.Avg_min_between_sent_tnx ?? 0
-                )}
+                label="Recent Transaction Count"
+                type="number"
+                value={customContext.recent_transaction_count}
                 onChange={(value) =>
-                  updateCustomMLFeature(
+                  updateContext(
+                    "recent_transaction_count",
+                    Number(value)
+                  )
+                }
+              />
+
+            </div>
+
+            <h3 className="mb-4 mt-8 text-lg font-semibold">
+              USO Behavioural Features
+            </h3>
+
+            <div className="grid gap-4 md:grid-cols-4">
+              <FeatureInput
+                label="Avg sent interval"
+                value={
+                  customContext.additional_features
+                    .Avg_min_between_sent_tnx
+                }
+                onChange={(value) =>
+                  updateCustomFeature(
                     "Avg_min_between_sent_tnx",
                     value
                   )
                 }
-                type="number"
               />
 
-              <InputField
-                label="AVG TIME BETWEEN RECEIVED TXNS (MIN)"
-                value={String(
-                  mlFeatures?.Avg_min_between_received_tnx ?? 0
-                )}
+              <FeatureInput
+                label="Avg received interval"
+                value={
+                  customContext.additional_features
+                    .Avg_min_between_received_tnx
+                }
                 onChange={(value) =>
-                  updateCustomMLFeature(
+                  updateCustomFeature(
                     "Avg_min_between_received_tnx",
                     value
                   )
                 }
-                type="number"
               />
 
-              <InputField
-                label="TOTAL ACTIVE DURATION (MIN)"
-                value={String(
-                  mlFeatures?.Time_Diff_between_first_and_last_Mins_ ??
-                    0
-                )}
+              <FeatureInput
+                label="Account lifetime mins"
+                value={
+                  customContext.additional_features
+                    .Time_Diff_between_first_and_last_Mins_
+                }
                 onChange={(value) =>
-                  updateCustomMLFeature(
+                  updateCustomFeature(
                     "Time_Diff_between_first_and_last_Mins_",
                     value
                   )
                 }
-                type="number"
               />
 
-              <InputField
-                label="SENT TRANSACTIONS"
-                value={String(mlFeatures?.Sent_tnx ?? 0)}
-                onChange={(value) =>
-                  updateCustomMLFeature("Sent_tnx", value)
+              <FeatureInput
+                label="Sent transactions"
+                value={
+                  customContext.additional_features.Sent_tnx
                 }
-                type="number"
-              />
-
-              <InputField
-                label="RECEIVED TRANSACTIONS"
-                value={String(mlFeatures?.Received_Tnx ?? 0)}
                 onChange={(value) =>
-                  updateCustomMLFeature("Received_Tnx", value)
+                  updateCustomFeature("Sent_tnx", value)
                 }
-                type="number"
               />
 
-              <InputField
-                label="TOTAL TRANSACTIONS"
-                value={String(mlFeatures?.total_transactions ?? 0)}
+              <FeatureInput
+                label="Received transactions"
+                value={
+                  customContext.additional_features.Received_Tnx
+                }
                 onChange={(value) =>
-                  updateCustomMLFeature(
+                  updateCustomFeature("Received_Tnx", value)
+                }
+              />
+
+              <FeatureInput
+                label="Total transactions"
+                value={
+                  customContext.additional_features
+                    .total_transactions
+                }
+                onChange={(value) =>
+                  updateCustomFeature(
                     "total_transactions",
                     value
                   )
                 }
-                type="number"
               />
 
-              <InputField
-                label="AVG VALUE RECEIVED (INR)"
-                value={String(mlFeatures?.avg_val_received ?? 0)}
+              <FeatureInput
+                label="Avg value received"
+                value={
+                  customContext.additional_features
+                    .avg_val_received
+                }
                 onChange={(value) =>
-                  updateCustomMLFeature(
+                  updateCustomFeature(
                     "avg_val_received",
                     value
                   )
                 }
-                type="number"
               />
 
-              <InputField
-                label="AVG VALUE SENT (INR)"
-                value={String(mlFeatures?.avg_val_sent ?? 0)}
-                onChange={(value) =>
-                  updateCustomMLFeature("avg_val_sent", value)
+              <FeatureInput
+                label="Avg value sent"
+                value={
+                  customContext.additional_features.avg_val_sent
                 }
-                type="number"
+                onChange={(value) =>
+                  updateCustomFeature(
+                    "avg_val_sent",
+                    value
+                  )
+                }
               />
             </div>
-          </div>
+          </section>
         )}
 
-        {/* RUN SIMULATION */}
-        <div
-          className="card"
-          style={{
-            padding: "18px",
-            marginBottom: "20px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "20px",
-            background: "var(--bg-surface-container)",
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: "0.65rem",
-                fontWeight: 800,
-                letterSpacing: "0.1em",
-                color: "var(--text-muted)",
-              }}
-            >
-              SELECTED MODE
+        {/* ACTIVE TRANSACTION */}
+        <section className="grid gap-8 lg:grid-cols-2">
+
+          {/* LEFT */}
+          <div className="space-y-6">
+
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+
+              <div className="mb-6 flex items-center justify-between">
+                <h2 className="text-xl font-semibold">
+                  Transaction Context
+                </h2>
+
+                <span className="rounded-full border border-cyan-400/30 px-3 py-1 text-xs text-cyan-400">
+                  {activeScenario.name}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <InfoRow
+                  label="Amount"
+                  value={`₹${Number(
+                    activeScenario.amount
+                  ).toLocaleString()}`}
+                />
+
+                <InfoRow
+                  label="Destination"
+                  value={activeScenario.destination}
+                />
+
+                <InfoRow
+                  label="New Device"
+                  value={
+                    activeScenario.context.new_device
+                      ? "YES"
+                      : "NO"
+                  }
+                />
+
+                <InfoRow
+                  label="New Beneficiary"
+                  value={
+                    activeScenario.context.new_beneficiary
+                      ? "YES"
+                      : "NO"
+                  }
+                />
+
+                <InfoRow
+                  label="Unusual Time"
+                  value={
+                    activeScenario.context.unusual_time
+                      ? "YES"
+                      : "NO"
+                  }
+                />
+
+                <InfoRow
+                  label="Recent Transactions"
+                  value={String(
+                    activeScenario.context
+                      .recent_transaction_count
+                  )}
+                />
+              </div>
             </div>
 
-            <div
-              style={{
-                fontSize: "1rem",
-                fontWeight: 700,
-                color: "var(--text-primary)",
-                marginTop: "5px",
-              }}
+            {/* RUN */}
+            <button
+              onClick={runSimulation}
+              disabled={loading}
+              className="w-full rounded-2xl bg-cyan-400 px-6 py-4 font-bold text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isCustom ? "Custom Transaction" : selectedScenario.name}
+              {loading
+                ? "Running Security Check..."
+                : "Run Sentinel Security Check"}
+            </button>
+
+            {error && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+                {error}
+              </div>
+            )}
+
+          </div>
+
+          {/* RIGHT */}
+          <div className="space-y-6">
+
+            {/* PIPELINE */}
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+
+              <h2 className="mb-6 text-xl font-semibold">
+                Pre-Commitment Pipeline
+              </h2>
+
+              <Pipeline
+                active={stage !== "idle"}
+                completed={
+                  [
+                    "risk_complete",
+                    "hardware",
+                    "verified",
+                    "authorizing",
+                    "authorized",
+                    "executing",
+                    "executed",
+                  ].includes(stage)
+                }
+                title="1. Contextual Risk Analysis"
+                description="Behavioural and transaction context is evaluated."
+              />
+
+              <Pipeline
+                active={[
+                  "hardware",
+                  "verified",
+                  "authorizing",
+                  "authorized",
+                  "executing",
+                  "executed",
+                ].includes(stage)}
+                completed={[
+                  "verified",
+                  "authorizing",
+                  "authorized",
+                  "executing",
+                  "executed",
+                ].includes(stage)}
+                title="2. Hardware Verification"
+                description="Secure device confirmation is simulated."
+              />
+
+              <Pipeline
+                active={[
+                  "authorizing",
+                  "authorized",
+                  "executing",
+                  "executed",
+                ].includes(stage)}
+                completed={[
+                  "authorized",
+                  "executing",
+                  "executed",
+                ].includes(stage)}
+                title="3. Authorization"
+                description="Transaction is authorized after verification."
+              />
+
+              <Pipeline
+                active={[
+                  "executing",
+                  "executed",
+                ].includes(stage)}
+                completed={stage === "executed"}
+                title="4. Execution"
+                description="Final execution is simulated."
+              />
+
             </div>
 
-            <p
-              style={{
-                marginTop: 8,
-                color: "var(--text-secondary)",
-                fontSize: 14,
-              }}
-            >
-              Sentinel will evaluate the transaction context before
-              authorization.
+            {/* RISK RESULT */}
+            {transaction && (
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+
+                <h2 className="mb-5 text-xl font-semibold">
+                  Sentinel Decision
+                </h2>
+
+                <div className="mb-6 flex items-center justify-between">
+
+                  <div>
+                    <p className="text-sm text-gray-500">
+                      Risk Score
+                    </p>
+
+                    <p className="text-4xl font-bold">
+                      {Math.round(
+                        transaction.backend_risk.score * 100
+                      )}
+                      %
+                    </p>
+                  </div>
+
+                  <div
+                    className={`rounded-full px-4 py-2 text-sm font-bold ${
+                      transaction.backend_risk.level === "HIGH"
+                        ? "bg-red-500/20 text-red-400"
+                        : transaction.backend_risk.level ===
+                          "MEDIUM"
+                        ? "bg-yellow-500/20 text-yellow-400"
+                        : "bg-green-500/20 text-green-400"
+                    }`}
+                  >
+                    {transaction.backend_risk.level}
+                  </div>
+
+                </div>
+
+                <div className="space-y-3">
+                  {transaction.backend_risk.reasons.length ===
+                  0 ? (
+                    <p className="text-sm text-gray-400">
+                      No significant contextual anomalies detected.
+                    </p>
+                  ) : (
+                    transaction.backend_risk.reasons.map(
+                      (reason: any) => (
+                        <div
+                          key={reason.code}
+                          className="rounded-xl border border-white/10 bg-black/30 p-3"
+                        >
+                          <p className="text-sm font-semibold">
+                            {reason.code}
+                          </p>
+
+                          <p className="mt-1 text-xs text-gray-400">
+                            {reason.message}
+                          </p>
+                        </div>
+                      )
+                    )
+                  )}
+                </div>
+
+              </div>
+            )}
+
+          </div>
+        </section>
+
+        {/* QR FEATURES */}
+        <section className="mt-8 rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold">
+              Behavioural Features → QR Payload
+            </h2>
+
+            <p className="mt-2 text-sm text-gray-500">
+              SentinelVault carries only the eight USO behavioural
+              features in the QR payload.
             </p>
           </div>
 
-          <button
-            onClick={runSimulation}
-            disabled={loading}
-            style={{
-              minWidth: 220,
-              padding: "16px 24px",
-              borderRadius: 12,
-              border: "none",
-              background: loading ? "#555" : "#f1f2f6",
-              color: "#111318",
-              fontSize: 14,
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              cursor: loading ? "not-allowed" : "pointer",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-            }}
-          >
-            {loading ? "ANALYZING..." : "RUN SECURITY CHECK →"}
-          </button>
-        </div>
-
-        {/* MAIN SIMULATION */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1.15fr 0.85fr",
-            gap: "16px",
-          }}
-        >
-          {/* CONTEXT */}
-          <div
-            className="card"
-            style={{
-              padding: "22px",
-              background: "var(--bg-surface-container)",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "0.65rem",
-                fontWeight: 800,
-                letterSpacing: "0.12em",
-                color: "var(--text-muted)",
-                marginBottom: "18px",
-              }}
-            >
-              CONTEXT INTELLIGENCE
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "10px",
-              }}
-            >
-              <Signal
-                label="NEW DEVICE"
-                active={activeContext.new_device}
-              />
-
-              <Signal
-                label="NEW BENEFICIARY"
-                active={activeContext.new_beneficiary}
-              />
-
-              <Signal
-                label="UNUSUAL TIME"
-                active={activeContext.unusual_time}
-              />
-
-              <Signal
-                label="AMOUNT DEVIATION"
-                active={activeContext.amount_deviation > 0.5}
-              />
-
-              <Signal
-                label="RECENT ACTIVITY"
-                active={activeContext.recent_transaction_count >= 5}
-              />
-
-              <Signal
-                label="BEHAVIOURAL PROFILE"
-                active={Boolean(
-                  activeContext.additional_features?.ml_features
-                )}
-              />
-            </div>
-
-            <div
-              style={{
-                marginTop: "20px",
-                paddingTop: "18px",
-                borderTop: "1px solid var(--border-subtle)",
-              }}
-            >
-              <InfoRow
-                label="DESTINATION"
-                value={activeDestination}
-              />
-
-              <InfoRow
-                label="AMOUNT"
-                value={`₹${activeAmount.toLocaleString("en-IN")}`}
-              />
-
-              <InfoRow
-                label="DEVICE"
-                value="DEVICE-001"
-              />
-
-              <InfoRow
-                label="RECENT TRANSACTIONS"
-                value={String(
-                  activeContext.recent_transaction_count
-                )}
-              />
-            </div>
-          </div>
-
-          {/* DECISION */}
-          <div
-            className="card"
-            style={{
-              padding: "22px",
-              background: "var(--bg-surface-container)",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "0.65rem",
-                fontWeight: 800,
-                letterSpacing: "0.12em",
-                color: "var(--text-muted)",
-                marginBottom: "18px",
-              }}
-            >
-              SENTINEL DECISION
-            </div>
-
-            {!transaction ? (
-              <div
-                style={{
-                  minHeight: 230,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  textAlign: "center",
-                  color: "var(--text-muted)",
-                  fontSize: "0.8rem",
-                }}
-              >
-                Run a security check to activate the risk engine.
-              </div>
-            ) : (
-              <>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    gap: "12px",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "3rem",
-                      fontWeight: 800,
-                      letterSpacing: "-0.06em",
-                      color: "var(--text-primary)",
-                    }}
-                  >
-                    {riskScore}%
-                  </span>
-
-                  <span
-                    style={{
-                      fontSize: "0.7rem",
-                      fontWeight: 800,
-                      letterSpacing: "0.1em",
-                    }}
-                  >
-                    {riskLevel}
-                  </span>
-                </div>
-
-                <div
-                  style={{
-                    height: 5,
-                    background: "var(--border-subtle)",
-                    borderRadius: 99,
-                    overflow: "hidden",
-                    margin: "16px 0",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${riskScore}%`,
-                      height: "100%",
-                      background: "var(--text-primary)",
-                      borderRadius: 99,
-                    }}
-                  />
-                </div>
-
-                <div
-                  style={{
-                    fontSize: "0.7rem",
-                    fontWeight: 800,
-                    letterSpacing: "0.08em",
-                    marginBottom: "10px",
-                  }}
-                >
-                  WHY?
-                </div>
-
-                {transaction.backend_risk.reasons.map((reason) => (
-                  <div
-                    key={reason.code}
-                    style={{
-                      padding: "9px 0",
-                      borderBottom:
-                        "1px solid var(--border-subtle)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: "0.68rem",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {reason.code.replaceAll("_", " ")}
-                    </div>
-
-                    <div
-                      style={{
-                        fontSize: "0.68rem",
-                        color: "var(--text-muted)",
-                        marginTop: "3px",
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      {reason.message}
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* ML FEATURE PAYLOAD PREVIEW */}
-        <div
-          className="card"
-          style={{
-            marginTop: "16px",
-            padding: "22px",
-            background: "var(--bg-surface-container)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "0.65rem",
-              fontWeight: 800,
-              letterSpacing: "0.12em",
-              color: "var(--text-muted)",
-              marginBottom: "18px",
-            }}
-          >
-            BEHAVIOURAL FEATURES → QR PAYLOAD
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
-              gap: "10px",
-            }}
-          >
-            <FeatureCard
-              label="AVG SENT INTERVAL"
-              value={`${mlFeatures?.Avg_min_between_sent_tnx ?? 0} min`}
-            />
+          <div className="grid gap-4 md:grid-cols-4">
 
             <FeatureCard
-              label="AVG RECEIVED INTERVAL"
-              value={`${mlFeatures?.Avg_min_between_received_tnx ?? 0} min`}
-            />
-
-            <FeatureCard
-              label="ACTIVE DURATION"
-              value={`${mlFeatures?.Time_Diff_between_first_and_last_Mins_ ?? 0} min`}
-            />
-
-            <FeatureCard
-              label="SENT TXNS"
-              value={String(mlFeatures?.Sent_tnx ?? 0)}
-            />
-
-            <FeatureCard
-              label="RECEIVED TXNS"
-              value={String(mlFeatures?.Received_Tnx ?? 0)}
-            />
-
-            <FeatureCard
-              label="TOTAL TXNS"
-              value={String(mlFeatures?.total_transactions ?? 0)}
-            />
-
-            <FeatureCard
-              label="AVG RECEIVED VALUE"
-              value={`₹${(
-                mlFeatures?.avg_val_received ?? 0
-              ).toLocaleString("en-IN")}`}
-            />
-
-            <FeatureCard
-              label="AVG SENT VALUE"
-              value={`₹${(
-                mlFeatures?.avg_val_sent ?? 0
-              ).toLocaleString("en-IN")}`}
-            />
-          </div>
-        </div>
-
-        {/* PIPELINE */}
-        <div
-          className="card"
-          style={{
-            marginTop: "16px",
-            padding: "22px",
-            background: "var(--bg-surface-container)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "0.65rem",
-              fontWeight: 800,
-              letterSpacing: "0.12em",
-              color: "var(--text-muted)",
-              marginBottom: "20px",
-            }}
-          >
-            PRE-COMMITMENT PIPELINE
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(5, 1fr)",
-              gap: "8px",
-            }}
-          >
-            <Pipeline
-              label="CONTEXT"
-              active={stage !== "READY"}
-              complete={stage !== "READY" && stage !== "ANALYZING"}
-            />
-
-            <Pipeline
-              label="RISK ENGINE"
-              active={
-                stage !== "READY" && stage !== "ANALYZING"
+              name="Avg_min_between_sent_tnx"
+              value={
+                activeScenario.context.additional_features
+                  .Avg_min_between_sent_tnx
               }
-              complete={Boolean(transaction)}
             />
 
-            <Pipeline
-              label="SIGNED QR"
-              active={Boolean(transaction)}
-              complete={Boolean(transaction)}
+            <FeatureCard
+              name="Avg_min_between_received_tnx"
+              value={
+                activeScenario.context.additional_features
+                  .Avg_min_between_received_tnx
+              }
             />
 
-            <Pipeline
-              label="HARDWARE"
-              active={[
-                "HARDWARE_VERIFIED",
-                "AUTHORIZED",
-                "EXECUTED",
-              ].includes(stage)}
-              complete={[
-                "HARDWARE_VERIFIED",
-                "AUTHORIZED",
-                "EXECUTED",
-              ].includes(stage)}
+            <FeatureCard
+              name="Time_Diff_between_first_and_last_Mins_"
+              value={
+                activeScenario.context.additional_features
+                  .Time_Diff_between_first_and_last_Mins_
+              }
             />
 
-            <Pipeline
-              label="EXECUTION"
-              active={stage === "EXECUTED"}
-              complete={stage === "EXECUTED"}
+            <FeatureCard
+              name="Sent_tnx"
+              value={
+                activeScenario.context.additional_features.Sent_tnx
+              }
             />
+
+            <FeatureCard
+              name="Received_Tnx"
+              value={
+                activeScenario.context.additional_features
+                  .Received_Tnx
+              }
+            />
+
+            <FeatureCard
+              name="total_transactions"
+              value={
+                activeScenario.context.additional_features
+                  .total_transactions
+              }
+            />
+
+            <FeatureCard
+              name="avg_val_received"
+              value={
+                activeScenario.context.additional_features
+                  .avg_val_received
+              }
+            />
+
+            <FeatureCard
+              name="avg_val_sent"
+              value={
+                activeScenario.context.additional_features
+                  .avg_val_sent
+              }
+            />
+
           </div>
-        </div>
+        </section>
 
-        {/* ACTION */}
+        {/* ACTIONS */}
         {transaction && (
-          <div
-            className="card"
-            style={{
-              marginTop: "16px",
-              padding: "22px",
-              background: "var(--bg-surface-container)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: "20px",
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    fontSize: "0.65rem",
-                    fontWeight: 800,
-                    letterSpacing: "0.1em",
-                    color: "var(--text-muted)",
-                  }}
-                >
-                  CURRENT SECURITY STATE
-                </div>
+          <section className="mt-8 rounded-2xl border border-white/10 bg-white/[0.03] p-6">
 
-                <div
-                  style={{
-                    fontSize: "1rem",
-                    fontWeight: 700,
-                    marginTop: "5px",
-                    color: "var(--text-primary)",
-                  }}
-                >
-                  {stage === "RISK_DECISION" &&
-                    "Risk assessment complete — hardware verification required"}
+            <h2 className="mb-5 text-xl font-semibold">
+              Security Actions
+            </h2>
 
-                  {stage === "HARDWARE_VERIFIED" &&
-                    "Hardware verified — awaiting authorization"}
+            <div className="flex flex-wrap gap-4">
 
-                  {stage === "AUTHORIZED" &&
-                    "Authorization accepted — execution permitted"}
-
-                  {stage === "EXECUTED" &&
-                    "Simulation completed successfully"}
-                </div>
-
-                <div
-                  style={{
-                    marginTop: "7px",
-                    fontSize: "0.68rem",
-                    color: "var(--text-muted)",
-                  }}
-                >
-                  {transaction.transaction_id}
-                </div>
-              </div>
-
-              {stage === "RISK_DECISION" && (
+              {stage === "risk_complete" && (
                 <button
-                  onClick={verifyHardware}
+                  onClick={runHardwareVerification}
                   disabled={loading}
-                  className="primary-button"
-                  style={{ width: "auto", margin: 0 }}
+                  className="rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-300 hover:bg-cyan-400/20"
                 >
-                  SIMULATE HARDWARE VERIFICATION
+                  Simulate Hardware Verification
                 </button>
               )}
 
-              {stage === "HARDWARE_VERIFIED" && (
+              {stage === "verified" && (
                 <button
-                  onClick={authorize}
+                  onClick={authorizeTransaction}
                   disabled={loading}
-                  className="primary-button"
-                  style={{ width: "auto", margin: 0 }}
+                  className="rounded-xl border border-green-400/40 bg-green-400/10 px-5 py-3 font-semibold text-green-300 hover:bg-green-400/20"
                 >
-                  AUTHORIZE
+                  Authorize Transaction
                 </button>
               )}
 
-              {stage === "AUTHORIZED" && (
+              {stage === "authorized" && (
                 <button
-                  onClick={execute}
+                  onClick={executeTransaction}
                   disabled={loading}
-                  className="primary-button"
-                  style={{ width: "auto", margin: 0 }}
+                  className="rounded-xl border border-purple-400/40 bg-purple-400/10 px-5 py-3 font-semibold text-purple-300 hover:bg-purple-400/20"
                 >
-                  SIMULATE EXECUTION
+                  Simulate Execution
                 </button>
               )}
 
-              {stage === "EXECUTED" && (
-                <div
-                  style={{
-                    fontSize: "0.7rem",
-                    fontWeight: 800,
-                    letterSpacing: "0.08em",
-                  }}
-                >
-                  ✓ EXECUTED
+              {stage === "executed" && (
+                <div className="rounded-xl border border-green-400/30 bg-green-400/10 px-5 py-3 font-semibold text-green-300">
+                  ✓ Transaction execution simulated successfully
                 </div>
               )}
+
+              <button
+                onClick={resetSimulation}
+                className="rounded-xl border border-white/10 px-5 py-3 text-gray-300 hover:bg-white/5"
+              >
+                Reset
+              </button>
+
             </div>
-          </div>
+          </section>
         )}
 
-        {/* ERROR */}
-        {error && (
-          <div
-            style={{
-              marginTop: "16px",
-              padding: "12px 14px",
-              borderRadius: "9px",
-              background: "rgba(239, 83, 80, 0.08)",
-              border: "1px solid rgba(239, 83, 80, 0.2)",
-              color: "#ff8a87",
-              fontSize: "0.7rem",
-            }}
-          >
-            {error}
-          </div>
-        )}
+        {/* FOOTER MESSAGE */}
+        <div className="mt-10 rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-6 text-center">
+          <p className="text-lg font-medium">
+            The transaction may be legitimate in isolation.
+          </p>
 
-        {/* FOOTER */}
-        <div
-          style={{
-            marginTop: "18px",
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: "0.6rem",
-            color: "var(--text-muted)",
-          }}
-        >
-          <span>SENTINELVAULT · PRE-COMMITMENT SECURITY</span>
-          <span>EXECUTION IS SIMULATED</span>
+          <p className="mt-2 text-sm text-gray-400">
+            SentinelVault evaluates the context around it before
+            commitment.
+          </p>
         </div>
+
       </div>
-    </DashboardLayout>
+    </main>
   );
 }
+
+
+/* -------------------------------------------------
+   COMPONENTS
+------------------------------------------------- */
 
 function InputField({
   label,
   value,
   onChange,
   type = "text",
+  step,
 }: {
   label: string;
-  value: string;
-  onChange: (value: string) => void;
+  value: string | number;
+  onChange: (value: any) => void;
   type?: string;
+  step?: string;
 }) {
   return (
-    <label style={{ display: "block" }}>
-      <div
-        style={{
-          fontSize: "0.58rem",
-          fontWeight: 800,
-          letterSpacing: "0.08em",
-          color: "var(--text-muted)",
-          marginBottom: "7px",
-        }}
-      >
+    <label className="block">
+      <span className="mb-2 block text-sm text-gray-400">
         {label}
-      </div>
+      </span>
 
       <input
         type={type}
+        step={step}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-        style={{
-          width: "100%",
-          boxSizing: "border-box",
-          padding: "11px 12px",
-          borderRadius: "8px",
-          border: "1px solid var(--border-subtle)",
-          background: "var(--bg-surface)",
-          color: "var(--text-primary)",
-          outline: "none",
-          fontSize: "0.75rem",
-        }}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
+        className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-cyan-400"
       />
     </label>
   );
 }
+
 
 function ToggleField({
   label,
@@ -1375,144 +1008,53 @@ function ToggleField({
     <button
       type="button"
       onClick={() => onChange(!value)}
-      style={{
-        padding: "13px",
-        borderRadius: "9px",
-        border: value
-          ? "1px solid var(--text-primary)"
-          : "1px solid var(--border-subtle)",
-        background: value
-          ? "var(--bg-surface-container-high)"
-          : "transparent",
-        color: "var(--text-primary)",
-        textAlign: "left",
-        cursor: "pointer",
-      }}
+      className="flex items-center justify-between rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-left"
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "10px",
-        }}
-      >
-        <span
-          style={{
-            fontSize: "0.62rem",
-            fontWeight: 800,
-            letterSpacing: "0.07em",
-          }}
-        >
-          {label}
-        </span>
+      <span className="text-sm text-gray-300">
+        {label}
+      </span>
 
-        <span
-          style={{
-            fontSize: "0.58rem",
-            fontWeight: 800,
-          }}
-        >
-          {value ? "ON" : "OFF"}
-        </span>
-      </div>
+      <span
+        className={`rounded-full px-3 py-1 text-xs font-semibold ${
+          value
+            ? "bg-red-500/20 text-red-400"
+            : "bg-green-500/20 text-green-400"
+        }`}
+      >
+        {value ? "YES" : "NO"}
+      </span>
     </button>
   );
 }
 
-function Signal({
-  label,
-  active,
-}: {
-  label: string;
-  active: boolean;
-}) {
-  return (
-    <div
-      style={{
-        padding: "12px",
-        borderRadius: "9px",
-        border: "1px solid var(--border-subtle)",
-        background: active
-          ? "rgba(239, 83, 80, 0.07)"
-          : "transparent",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "7px",
-          fontSize: "0.65rem",
-          fontWeight: 700,
-        }}
-      >
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: active
-              ? "#ef5350"
-              : "var(--text-muted)",
-          }}
-        />
 
-        {label}
-      </div>
-
-      <div
-        style={{
-          marginTop: "6px",
-          fontSize: "0.6rem",
-          color: "var(--text-muted)",
-        }}
-      >
-        {active ? "SIGNAL DETECTED" : "NORMAL"}
-      </div>
-    </div>
-  );
-}
-
-function FeatureCard({
+function FeatureInput({
   label,
   value,
+  onChange,
 }: {
   label: string;
-  value: string;
+  value: number;
+  onChange: (value: number) => void;
 }) {
   return (
-    <div
-      style={{
-        padding: "12px",
-        borderRadius: "9px",
-        border: "1px solid var(--border-subtle)",
-      }}
-    >
-      <div
-        style={{
-          fontSize: "0.55rem",
-          fontWeight: 800,
-          letterSpacing: "0.06em",
-          color: "var(--text-muted)",
-        }}
-      >
+    <label className="block">
+      <span className="mb-2 block text-xs text-gray-500">
         {label}
-      </div>
+      </span>
 
-      <div
-        style={{
-          marginTop: "6px",
-          fontSize: "0.8rem",
-          fontWeight: 700,
-          color: "var(--text-primary)",
-        }}
-      >
-        {value}
-      </div>
-    </div>
+      <input
+        type="number"
+        value={value}
+        onChange={(event) =>
+          onChange(Number(event.target.value))
+        }
+        className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+      />
+    </label>
   );
 }
+
 
 function InfoRow({
   label,
@@ -1522,62 +1064,82 @@ function InfoRow({
   value: string;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        padding: "8px 0",
-        borderBottom: "1px solid var(--border-subtle)",
-        fontSize: "0.68rem",
-      }}
-    >
-      <span style={{ color: "var(--text-muted)" }}>{label}</span>
-      <strong>{value}</strong>
+    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+      <p className="text-xs uppercase tracking-wide text-gray-500">
+        {label}
+      </p>
+
+      <p className="mt-1 break-all text-sm font-medium text-gray-200">
+        {value}
+      </p>
     </div>
   );
 }
 
-function Pipeline({
-  label,
-  active,
-  complete,
+
+function FeatureCard({
+  name,
+  value,
 }: {
-  label: string;
-  active: boolean;
-  complete: boolean;
+  name: string;
+  value: number;
 }) {
   return (
-    <div
-      style={{
-        padding: "13px 10px",
-        borderRadius: "9px",
-        border: "1px solid var(--border-subtle)",
-        opacity: active ? 1 : 0.35,
-        textAlign: "center",
-      }}
-    >
-      <div
-        style={{
-          fontSize: "0.65rem",
-          fontWeight: 800,
-        }}
-      >
-        {complete ? "✓" : "○"} {label}
-      </div>
+    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+      <p className="break-all text-xs text-gray-500">
+        {name}
+      </p>
+
+      <p className="mt-2 text-lg font-semibold">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+
+function Pipeline({
+  active,
+  completed,
+  title,
+  description,
+}: {
+  active: boolean;
+  completed: boolean;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="mb-4 flex gap-4">
 
       <div
-        style={{
-          marginTop: "4px",
-          fontSize: "0.55rem",
-          color: "var(--text-muted)",
-        }}
+        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+          completed
+            ? "bg-green-400 text-black"
+            : active
+            ? "bg-cyan-400 text-black"
+            : "bg-white/10 text-gray-500"
+        }`}
       >
-        {complete
-          ? "COMPLETE"
-          : active
-          ? "ACTIVE"
-          : "PENDING"}
+        {completed ? "✓" : "•"}
       </div>
+
+      <div>
+        <p
+          className={`font-medium ${
+            active || completed
+              ? "text-white"
+              : "text-gray-500"
+          }`}
+        >
+          {title}
+        </p>
+
+        <p className="mt-1 text-xs text-gray-500">
+          {description}
+        </p>
+      </div>
+
     </div>
   );
 }
