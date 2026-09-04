@@ -89,29 +89,62 @@ class SentinelRiskEngine:
         # 4. AMOUNT DEVIATION
         # -------------------------------------------------
 
-        if context.amount_deviation > 0:
+       # -------------------------------------------------
+# 4. TRANSACTION AMOUNT + AMOUNT DEVIATION
+# -------------------------------------------------
 
-            contribution = (
-                context.amount_deviation
-                * self.config.amount_deviation_weight
+# The amount deviation represents how unusual this
+# transaction amount is compared with normal behaviour.
+#
+# For the MVP, if the frontend provides an explicit
+# amount_deviation, we use it. Otherwise, derive a
+# simple amount-based signal from the transaction amount.
+
+amount_deviation = context.amount_deviation
+
+if amount_deviation <= 0:
+    if transaction.amount >= 500000:
+        amount_deviation = 1.0
+    elif transaction.amount >= 100000:
+        amount_deviation = 0.75
+    elif transaction.amount >= 50000:
+        amount_deviation = 0.50
+    elif transaction.amount >= 10000:
+        amount_deviation = 0.25
+    else:
+        amount_deviation = 0.0
+
+if amount_deviation > 0:
+
+    contribution = (
+        amount_deviation
+        * self.config.amount_deviation_weight
+    )
+
+    score += contribution
+
+    if amount_deviation >= 0.70:
+        reasons.append(
+            RiskReason(
+                code="HIGH_AMOUNT_DEVIATION",
+                message=(
+                    f"Transaction amount of {transaction.amount:,.2f} "
+                    "is significantly above the normal risk range."
+                ),
             )
+        )
 
-            score += contribution
-
-            if context.amount_deviation >= 0.70:
-                reasons.append(
-                    RiskReason(
-                        code="HIGH_AMOUNT_DEVIATION",
-                        message="Transaction amount is significantly above normal behaviour.",
-                    )
-                )
-            elif context.amount_deviation >= 0.40:
-                reasons.append(
-                    RiskReason(
-                        code="AMOUNT_DEVIATION",
-                        message="Transaction amount differs from the user's normal pattern.",
-                    )
-                )
+    elif amount_deviation >= 0.40:
+        reasons.append(
+            RiskReason(
+                code="AMOUNT_DEVIATION",
+                message=(
+                    f"Transaction amount of {transaction.amount:,.2f} "
+                    "is above the normal risk range."
+                ),
+            )
+        )
+            
 
         # -------------------------------------------------
         # 5. RECENT TRANSACTION BURST

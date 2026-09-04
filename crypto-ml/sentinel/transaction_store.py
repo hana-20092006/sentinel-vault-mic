@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from threading import Lock
+from threading import RLock
 from typing import Dict, Optional
 
 from .models import (
@@ -68,7 +68,7 @@ class TransactionStore:
 
     def __init__(self):
         self._transactions: Dict[str, Transaction] = {}
-        self._lock = Lock()
+        self._lock = RLock()
 
     def create(self, transaction: Transaction) -> Transaction:
         """Store a new transaction."""

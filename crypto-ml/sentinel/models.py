@@ -81,6 +81,7 @@ class Transaction(BaseModel):
 
     context: Optional[TransactionContext] = None
     risk: Optional[RiskAssessment] = None
+    device_result: Optional[dict] = None
 
 
 class TransactionResponse(BaseModel):

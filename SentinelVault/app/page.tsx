@@ -209,6 +209,8 @@ export default function Home() {
           <VaultStatus address={address} />
         </div>
       </div>
+    
+    
     </DashboardLayout>
   );
 }
