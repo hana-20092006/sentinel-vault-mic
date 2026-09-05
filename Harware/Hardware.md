@@ -1088,25 +1088,6 @@ Before the presentation:
 
 ---
 
-# 26. Final Firmware Files
-
-Recommended presentation set:
-
-```text
-Main ESP32:
-SentinelVault_Main_Final_TwoScreen_DemoStar.ino
-
-ESP32-CAM:
-SentinelVault_CAM_Final_UPDATED.ino
-
-Main local support files:
-tinyml_model.h
-qrcode.h
-qrcode.c
-```
-
----
-
 ## Final Runtime Summary
 
 ```text
@@ -1140,3 +1121,4 @@ RETURN TO WAITING STATE
 DEVICE REMAINS UNLOCKED
 UNTIL # IS PRESSED
 ```
+
